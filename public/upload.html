@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Upload Media - Lucas' Streamer</title>
+        <style>
+            body {
+                font-family: "Arial", sans-serif;
+                background-color: #0f0f1a;
+                color: #ffffff;
+                margin: 0;
+                padding: 0;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                text-align: center;
+            }
+
+            h1 {
+                font-size: 3rem;
+                margin-bottom: 2rem;
+                text-shadow:
+                    0 0 10px #0ff,
+                    0 0 20px #0ff,
+                    0 0 30px #0ff;
+                color: #fff;
+                letter-spacing: 3px;
+            }
+
+            .container {
+                background-color: rgba(16, 16, 32, 0.7);
+                border-radius: 15px;
+                padding: 2rem;
+                width: 80%;
+                max-width: 600px;
+                box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+                position: relative;
+            }
+
+            .container::before {
+                content: "";
+                position: absolute;
+                top: -2px;
+                left: -2px;
+                right: -2px;
+                bottom: -2px;
+                background: linear-gradient(
+                    45deg,
+                    #ff00ff,
+                    #00ffff,
+                    #ff00ff,
+                    #00ffff
+                );
+                z-index: -1;
+                border-radius: 17px;
+                filter: blur(5px);
+                animation: neonGlow 3s linear infinite;
+            }
+
+            @keyframes neonGlow {
+                0% {
+                    filter: blur(5px);
+                    opacity: 0.7;
+                }
+                50% {
+                    filter: blur(7px);
+                    opacity: 0.9;
+                }
+                100% {
+                    filter: blur(5px);
+                    opacity: 0.7;
+                }
+            }
+
+            .upload-form {
+                margin: 2rem 0;
+            }
+
+            #fileInput {
+                display: none;
+            }
+
+            .file-label {
+                background: linear-gradient(45deg, #8a2be2, #4b0082);
+                color: white;
+                padding: 12px 24px;
+                border-radius: 30px;
+                cursor: pointer;
+                margin-bottom: 1rem;
+                display: inline-block;
+                transition: all 0.3s ease;
+                box-shadow: 0 0 15px rgba(138, 43, 226, 0.5);
+            }
+
+            .file-label:hover {
+                transform: scale(1.05);
+                box-shadow: 0 0 20px rgba(138, 43, 226, 0.8);
+            }
+
+            #uploadButton {
+                background: linear-gradient(45deg, #00ffff, #ff00ff);
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                font-size: 1rem;
+                border-radius: 30px;
+                cursor: pointer;
+                margin: 1.5rem 0;
+                transition: all 0.3s ease;
+                box-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
+            }
+
+            #uploadButton:hover {
+                transform: scale(1.05);
+                box-shadow: 0 0 20px rgba(0, 255, 255, 0.8);
+            }
+
+            #uploadButton:disabled {
+                background: gray;
+                cursor: not-allowed;
+                transform: none;
+                box-shadow: none;
+            }
+
+            #fileInfo {
+                margin-top: 0.5rem;
+                font-style: italic;
+                color: #cccccc;
+            }
+
+            #uploadStatus {
+                margin-top: 1rem;
+                padding: 10px;
+                border-radius: 5px;
+                background-color: rgba(255, 255, 255, 0.1);
+            }
+
+            .success {
+                color: #00ffaa;
+                text-shadow: 0 0 5px #00ffaa;
+            }
+
+            .error {
+                color: #ff77aa;
+                text-shadow: 0 0 5px #ff77aa;
+            }
+
+            #mediaList {
+                margin-top: 2rem;
+                text-align: left;
+                width: 100%;
+            }
+
+            .media-item {
+                background-color: rgba(255, 255, 255, 0.1);
+                padding: 10px;
+                margin: 5px 0;
+                border-radius: 5px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            .media-name {
+                flex-grow: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                padding-right: 10px;
+            }
+
+            .button-container a {
+                text-decoration: none;
+                color: white;
+                margin-left: 10px;
+                background-color: rgba(0, 255, 255, 0.2);
+                padding: 5px 10px;
+                border-radius: 5px;
+                font-size: 0.8rem;
+                transition: all 0.3s ease;
+            }
+
+            .button-container a:hover {
+                background-color: rgba(0, 255, 255, 0.4);
+            }
+
+            .nav-links {
+                margin-top: 2rem;
+            }
+
+            .nav-links a {
+                color: #00ffff;
+                text-decoration: none;
+                margin: 0 10px;
+                transition: all 0.3s ease;
+            }
+
+            .nav-links a:hover {
+                text-shadow: 0 0 5px #00ffff;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Lucas' Streamer</h1>
+
+        <div class="container">
+            <h2>Upload Media Files</h2>
+
+            <div class="upload-form">
+                <label for="fileInput" class="file-label"
+                    >Select Video File</label
+                >
+                <input type="file" id="fileInput" accept="video/*" />
+                <div id="fileInfo">No file selected</div>
+
+                <button id="uploadButton" disabled>Upload Video</button>
+                <div id="uploadStatus"></div>
+            </div>
+
+            <h3>Your Media Library</h3>
+            <div id="mediaList">
+                <p>Loading media files...</p>
+            </div>
+
+            <div class="nav-links">
+                <a href="/">Back to Streamer</a>
+            </div>
+        </div>
+
+        <script>
+            // DOM elements
+            const fileInput = document.getElementById("fileInput");
+            const fileInfo = document.getElementById("fileInfo");
+            const uploadButton = document.getElementById("uploadButton");
+            const uploadStatus = document.getElementById("uploadStatus");
+            const mediaList = document.getElementById("mediaList");
+
+            // Handle file selection
+            fileInput.addEventListener("change", function () {
+                if (this.files && this.files[0]) {
+                    const file = this.files[0];
+                    fileInfo.textContent = `Selected: ${file.name} (${formatFileSize(file.size)})`;
+                    uploadButton.disabled = false;
+                } else {
+                    fileInfo.textContent = "No file selected";
+                    uploadButton.disabled = true;
+                }
+            });
+
+            // Handle file upload
+            uploadButton.addEventListener("click", async function () {
+                if (!fileInput.files || !fileInput.files[0]) {
+                    return;
+                }
+
+                const file = fileInput.files[0];
+
+                // Create form data
+                const formData = new FormData();
+                formData.append("videoFile", file);
+
+                // Update status
+                uploadStatus.textContent = "Uploading...";
+                uploadStatus.className = "";
+                uploadButton.disabled = true;
+
+                try {
+                    // Send the file to our server
+                    const response = await fetch("/api/upload", {
+                        method: "POST",
+                        body: formData,
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        uploadStatus.textContent = "Upload successful!";
+                        uploadStatus.className = "success";
+                        // Reset file input
+                        fileInput.value = "";
+                        fileInfo.textContent = "No file selected";
+                        // Refresh media list
+                        loadMediaFiles();
+                    } else {
+                        uploadStatus.textContent = `Upload failed: ${result.error}`;
+                        uploadStatus.className = "error";
+                    }
+                } catch (error) {
+                    uploadStatus.textContent = `Upload error: ${error.message}`;
+                    uploadStatus.className = "error";
+                } finally {
+                    uploadButton.disabled = false;
+                }
+            });
+
+            // Helper function to format file size
+            function formatFileSize(bytes) {
+                if (bytes === 0) return "0 Bytes";
+
+                const k = 1024;
+                const sizes = ["Bytes", "KB", "MB", "GB"];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+                return (
+                    parseFloat((bytes / Math.pow(k, i)).toFixed(2)) +
+                    " " +
+                    sizes[i]
+                );
+            }
+
+            // Load media files
+            async function loadMediaFiles() {
+                try {
+                    const response = await fetch("/api/media");
+                    const mediaFiles = await response.json();
+
+                    if (mediaFiles.length === 0) {
+                        mediaList.innerHTML = "<p>No media files available</p>";
+                        return;
+                    }
+
+                    // Create HTML for each media file
+                    let html = "";
+                    mediaFiles.forEach((file) => {
+                        html += `
+                        <div class="media-item">
+                            <div class="media-name">${file.name}</div>
+                            <div class="button-container">
+                                <a href="${file.url}" target="_blank">View</a>
+                            </div>
+                        </div>
+                    `;
+                    });
+
+                    mediaList.innerHTML = html;
+                } catch (error) {
+                    mediaList.innerHTML = `<p class="error">Error loading media files: ${error.message}</p>`;
+                }
+            }
+
+            // Initialize
+            window.addEventListener("DOMContentLoaded", loadMediaFiles);
+        </script>
+    </body>
+</html>

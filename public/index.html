@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Lucas' Streamer</title>
+        <!-- Add the Google Cast SDK -->
+        <script
+            type="text/javascript"
+            src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"
+        ></script>
+        <link rel="stylesheet" href="main.css" />
+    </head>
+    <body>
+        <h1>Lucas' Streamer</h1>
+
+        <div class="container">
+            <h2>Chromecast Media Streamer</h2>
+
+            <button id="castButton">Connect to Chromecast</button>
+            <div id="status" class="status-disconnected">Not connected</div>
+
+            <!-- Media Controls Section -->
+            <div id="mediaControls">
+                <div class="now-playing">
+                    Now Playing: <span id="mediaTitle">No media selected</span>
+                </div>
+
+                <div class="seek-container">
+                    <div id="currentTime">0:00</div>
+                    <input
+                        type="range"
+                        id="seekBar"
+                        min="0"
+                        max="100"
+                        value="0"
+                    />
+                    <div id="duration">0:00</div>
+                </div>
+
+                <div class="control-buttons">
+                    <button class="control-button" id="rewindButton">⏮</button>
+                    <button
+                        class="control-button play-pause"
+                        id="playPauseButton"
+                    >
+                        ▶
+                    </button>
+                    <button class="control-button" id="stopButton">⏹</button>
+                    <button class="control-button" id="forwardButton">
+                        ⏭
+                    </button>
+                </div>
+
+                <div class="volume-container">
+                    <div id="volumeIcon">🔊</div>
+                    <input
+                        type="range"
+                        id="volumeBar"
+                        min="0"
+                        max="100"
+                        value="100"
+                    />
+                </div>
+            </div>
+
+            <h3>Your Media Library</h3>
+            <div id="mediaList">
+                <p>Loading media files...</p>
+            </div>
+
+            <div class="nav-links">
+                <a href="/upload.html">Upload New Media</a>
+            </div>
+        </div>
+
+        <script>
+            // Global variables
+            let selectedMedia = null;
+            let castSession = null;
+            let mediaController = null;
+            let isPlaying = false;
+            let mediaInfo = null;
+            let currentMediaTime = 0;
+            let mediaDuration = 0;
+            let updateIntervalId = null;
+            let isUserSeeking = false;
+
+            // Wait for the Cast SDK to be available
+            window["__onGCastApiAvailable"] = function (isAvailable) {
+                if (isAvailable) {
+                    initializeCastApi();
+                } else {
+                    console.error("Cast API is not available");
+                    document.getElementById("status").textContent =
+                        "Cast API not available";
+                }
+            };
+
+            // Initialize the Cast API
+            function initializeCastApi() {
+                const castContext = cast.framework.CastContext.getInstance();
+                // Set options with default media receiver
+                castContext.setOptions({
+                    receiverApplicationId:
+                        chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+                    autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+                });
+
+                // Set up UI elements
+                const castButton = document.getElementById("castButton");
+                const statusElement = document.getElementById("status");
+                const mediaControls = document.getElementById("mediaControls");
+
+                // Create remote player controller
+                const remotePlayer = new cast.framework.RemotePlayer();
+                const remotePlayerController =
+                    new cast.framework.RemotePlayerController(remotePlayer);
+
+                // Add event listeners for remote player changes
+                remotePlayerController.addEventListener(
+                    cast.framework.RemotePlayerEventType.IS_CONNECTED_CHANGED,
+                    function () {
+                        try {
+                            if (remotePlayer.isConnected) {
+                                castSession = castContext.getCurrentSession();
+                                statusElement.textContent =
+                                    "Connected to Chromecast";
+                                statusElement.className = "status-connected";
+                                castButton.textContent = "Disconnect";
+
+                                // Show media controls
+                                mediaControls.style.display = "flex";
+
+                                // If media is selected, play it
+                                if (selectedMedia) {
+                                    setTimeout(() => {
+                                        playMedia(selectedMedia);
+                                    }, 1000); // Short delay to ensure connection is established
+                                }
+                            } else {
+                                castSession = null;
+                                mediaController = null;
+                                statusElement.textContent = "Not connected";
+                                statusElement.className = "status-disconnected";
+                                castButton.textContent =
+                                    "Connect to Chromecast";
+
+                                // Hide media controls
+                                mediaControls.style.display = "none";
+
+                                // Stop updating time
+                                if (updateIntervalId) {
+                                    clearInterval(updateIntervalId);
+                                    updateIntervalId = null;
+                                }
+                            }
+                        } catch (error) {
+                            console.error(
+                                "Error handling connection change:",
+                                error,
+                            );
+                        }
+                    },
+                );
+
+                // Add listeners for media changes
+                remotePlayerController.addEventListener(
+                    cast.framework.RemotePlayerEventType.CURRENT_TIME_CHANGED,
+                    function () {
+                        if (!isUserSeeking && remotePlayer.currentTime) {
+                            currentMediaTime = remotePlayer.currentTime;
+                            updateTimeDisplay();
+                        }
+                    },
+                );
+
+                remotePlayerController.addEventListener(
+                    cast.framework.RemotePlayerEventType.DURATION_CHANGED,
+                    function () {
+                        if (remotePlayer.duration) {
+                            mediaDuration = remotePlayer.duration;
+                            updateTimeDisplay();
+                        }
+                    },
+                );
+
+                remotePlayerController.addEventListener(
+                    cast.framework.RemotePlayerEventType.IS_PAUSED_CHANGED,
+                    function () {
+                        isPlaying = !remotePlayer.isPaused;
+                        updatePlayPauseButton();
+                    },
+                );
+
+                remotePlayerController.addEventListener(
+                    cast.framework.RemotePlayerEventType.VOLUME_LEVEL_CHANGED,
+                    function () {
+                        document.getElementById("volumeBar").value =
+                            remotePlayer.volumeLevel * 100;
+                    },
+                );
+
+                // Add click handler to cast button
+                castButton.addEventListener("click", function () {
+                    if (remotePlayer.isConnected) {
+                        // If already connected, end the session
+                        castContext.endCurrentSession(true);
+                    } else {
+                        // If not connected, request a new session
+                        castContext.requestSession().catch(function (error) {
+                            console.error(
+                                "Error requesting cast session:",
+                                error,
+                            );
+                            statusElement.textContent =
+                                "Connection failed: " + error.message;
+                        });
+                    }
+                });
+
+                // Set up media control event listeners
+                document
+                    .getElementById("playPauseButton")
+                    .addEventListener("click", function () {
+                        try {
+                            if (!castSession) return;
+
+                            const mediaSession = castSession.getMediaSession();
+                            if (!mediaSession) return;
+
+                            if (
+                                mediaSession.playerState ===
+                                chrome.cast.media.PlayerState.PLAYING
+                            ) {
+                                // Currently playing, so pause
+                                mediaSession.pause(
+                                    null,
+                                    () => {
+                                        console.log("Paused successfully");
+                                        isPlaying = false;
+                                        updatePlayPauseButton();
+                                    },
+                                    (error) =>
+                                        console.error("Error pausing:", error),
+                                );
+                            } else {
+                                // Not playing, so play
+                                mediaSession.play(
+                                    null,
+                                    () => {
+                                        console.log("Playing successfully");
+                                        isPlaying = true;
+                                        updatePlayPauseButton();
+                                    },
+                                    (error) =>
+                                        console.error("Error playing:", error),
+                                );
+                            }
+                        } catch (error) {
+                            console.error("Error with play/pause:", error);
+                        }
+                    });
+
+                document
+                    .getElementById("stopButton")
+                    .addEventListener("click", function () {
+                        try {
+                            if (!castSession) return;
+
+                            const mediaSession = castSession.getMediaSession();
+                            if (!mediaSession) return;
+
+                            mediaSession.stop(
+                                null,
+                                () => console.log("Stopped successfully"),
+                                (error) =>
+                                    console.error("Error stopping:", error),
+                            );
+                        } catch (error) {
+                            console.error("Error with stop:", error);
+                        }
+                    });
+
+                document
+                    .getElementById("rewindButton")
+                    .addEventListener("click", function () {
+                        try {
+                            if (!castSession) return;
+
+                            const mediaSession = castSession.getMediaSession();
+                            if (!mediaSession) return;
+
+                            // Get current time and calculate new time (10 seconds back)
+                            let currentTime = mediaSession.getEstimatedTime();
+                            if (currentTime === undefined) {
+                                currentTime = 0;
+                            }
+
+                            const newTime = Math.max(0, currentTime - 10);
+
+                            // Seek to the new time
+                            const request = new chrome.cast.media.SeekRequest();
+                            request.currentTime = newTime;
+
+                            mediaSession.seek(
+                                request,
+                                () =>
+                                    console.log(
+                                        "Rewound successfully to",
+                                        newTime,
+                                    ),
+                                (error) =>
+                                    console.error("Error rewinding:", error),
+                            );
+                        } catch (error) {
+                            console.error("Error with rewind:", error);
+                        }
+                    });
+
+                document
+                    .getElementById("forwardButton")
+                    .addEventListener("click", function () {
+                        try {
+                            if (!castSession) return;
+
+                            const mediaSession = castSession.getMediaSession();
+                            if (!mediaSession) return;
+
+                            // Get current time and duration
+                            let currentTime = mediaSession.getEstimatedTime();
+                            if (currentTime === undefined) {
+                                currentTime = 0;
+                            }
+
+                            let duration = mediaSession.media
+                                ? mediaSession.media.duration
+                                : 0;
+                            if (duration === undefined) {
+                                duration = Infinity;
+                            }
+
+                            // Calculate new time (10 seconds forward)
+                            const newTime = Math.min(
+                                duration,
+                                currentTime + 10,
+                            );
+
+                            // Seek to the new time
+                            const request = new chrome.cast.media.SeekRequest();
+                            request.currentTime = newTime;
+
+                            mediaSession.seek(
+                                request,
+                                () =>
+                                    console.log(
+                                        "Fast forwarded successfully to",
+                                        newTime,
+                                    ),
+                                (error) =>
+                                    console.error(
+                                        "Error fast forwarding:",
+                                        error,
+                                    ),
+                            );
+                        } catch (error) {
+                            console.error("Error with fast forward:", error);
+                        }
+                    });
+
+                // Set up seek bar event listeners
+                const seekBar = document.getElementById("seekBar");
+
+                seekBar.addEventListener("input", function () {
+                    isUserSeeking = true;
+                    const seekPercent = seekBar.value;
+                    const seekTime = (mediaDuration * seekPercent) / 100;
+                    document.getElementById("currentTime").textContent =
+                        formatTime(seekTime);
+                });
+
+                // Debounce function to prevent too many seek requests
+                let seekTimeout = null;
+
+                seekBar.addEventListener("change", function () {
+                    try {
+                        if (!castSession) return;
+
+                        // Clear any pending seek operation
+                        if (seekTimeout) {
+                            clearTimeout(seekTimeout);
+                        }
+
+                        // Add a status message
+                        document.getElementById("status").textContent =
+                            "Seeking...";
+
+                        seekTimeout = setTimeout(() => {
+                            const mediaSession = castSession.getMediaSession();
+                            if (!mediaSession) return;
+
+                            // Get seek time based on percentage
+                            const seekPercent = seekBar.value;
+                            let duration = mediaSession.media
+                                ? mediaSession.media.duration
+                                : 0;
+                            if (duration === undefined || isNaN(duration)) {
+                                duration = mediaDuration || 0;
+                            }
+
+                            const seekTime = (duration * seekPercent) / 100;
+                            console.log(
+                                `Seeking to ${seekTime} seconds (${seekPercent}% of ${duration})`,
+                            );
+
+                            // Create an enhanced seek request with proper buffering configuration
+                            const request = new chrome.cast.media.SeekRequest();
+                            request.currentTime = seekTime;
+
+                            // Set the proper resumeState based on current playing status
+                            if (isPlaying) {
+                                request.resumeState =
+                                    chrome.cast.media.ResumeState.PLAYBACK_START;
+                            } else {
+                                request.resumeState =
+                                    chrome.cast.media.ResumeState.PLAYBACK_PAUSE;
+                            }
+
+                            // Add custom request data to improve buffering behavior
+                            request.customData = {
+                                bufferingStrategy: "aggressive",
+                                preloadTime: 5, // Preload 5 seconds ahead
+                                requestHigherQuality: false, // Temporarily lower quality for faster rebuffering
+                            };
+
+                            mediaSession.seek(
+                                request,
+                                () => {
+                                    console.log("Seek successful to", seekTime);
+
+                                    // Update the current time display immediately for better UX
+                                    currentMediaTime = seekTime;
+                                    updateTimeDisplay();
+
+                                    // Update status
+                                    const mediaName =
+                                        document.getElementById(
+                                            "mediaTitle",
+                                        ).textContent;
+                                    document.getElementById(
+                                        "status",
+                                    ).textContent =
+                                        `Connected: ${isPlaying ? "Playing" : "Paused"} ${mediaName}`;
+
+                                    // If we were playing, make sure we're still playing
+                                    if (
+                                        isPlaying &&
+                                        mediaSession.playerState !==
+                                            chrome.cast.media.PlayerState
+                                                .PLAYING
+                                    ) {
+                                        // Add a small delay to allow buffer to fill before resuming playback
+                                        setTimeout(() => {
+                                            mediaSession.play(
+                                                null,
+                                                () =>
+                                                    console.log(
+                                                        "Resumed playback after seek",
+                                                    ),
+                                                (error) =>
+                                                    console.error(
+                                                        "Error resuming after seek:",
+                                                        error,
+                                                    ),
+                                            );
+                                        }, 500);
+                                    }
+                                },
+                                (error) => {
+                                    console.error("Error seeking:", error);
+                                    document.getElementById(
+                                        "status",
+                                    ).textContent = "Seek failed. Try again.";
+                                },
+                            );
+                        }, 200); // Short delay to allow UI to update first
+
+                        isUserSeeking = false;
+                    } catch (error) {
+                        console.error("Error with seek:", error);
+                        isUserSeeking = false;
+                        document.getElementById("status").textContent =
+                            "Seek error. Try again.";
+                    }
+                });
+
+                // Set up volume bar event listener
+                document
+                    .getElementById("volumeBar")
+                    .addEventListener("input", function () {
+                        if (!remotePlayerController) return;
+
+                        const volumePercent = this.value;
+                        remotePlayer.volumeLevel = volumePercent / 100;
+                        remotePlayerController.setVolumeLevel();
+
+                        // Update volume icon
+                        updateVolumeIcon(volumePercent);
+                    });
+
+                // Load the media list
+                loadMediaList();
+            }
+
+            // Load media list from server
+            async function loadMediaList() {
+                const mediaList = document.getElementById("mediaList");
+
+                try {
+                    const response = await fetch("/api/media");
+                    const mediaFiles = await response.json();
+
+                    if (mediaFiles.length === 0) {
+                        mediaList.innerHTML =
+                            '<p>No media files available. <a href="/upload.html">Upload some!</a></p>';
+                        return;
+                    }
+
+                    // Create HTML for each media file
+                    let html = "";
+                    mediaFiles.forEach((file) => {
+                        html += `
+                        <div class="media-item" data-name="${file.name}" data-url="${file.url}" data-type="${file.type}">
+                            ${file.name}
+                        </div>
+                    `;
+                    });
+
+                    mediaList.innerHTML = html;
+
+                    // Add click handlers to media items
+                    document.querySelectorAll(".media-item").forEach((item) => {
+                        item.addEventListener("click", function () {
+                            // Remove selected class from all items
+                            document
+                                .querySelectorAll(".media-item")
+                                .forEach((i) => {
+                                    i.classList.remove("selected");
+                                });
+
+                            // Add selected class to this item
+                            this.classList.add("selected");
+
+                            // Set selected media
+                            selectedMedia = {
+                                name: this.dataset.name,
+                                url: this.dataset.url,
+                                type: this.dataset.type,
+                            };
+
+                            // Update media title
+                            document.getElementById("mediaTitle").textContent =
+                                selectedMedia.name;
+
+                            // If already connected to Chromecast, play this media
+                            if (castSession) {
+                                playMedia(selectedMedia);
+                            }
+                        });
+                    });
+                } catch (error) {
+                    mediaList.innerHTML = `<p class="error">Error loading media files: ${error.message}</p>`;
+                }
+            }
+
+            // Function to play media on Chromecast
+            function playMedia(media) {
+                if (!castSession) {
+                    console.error("No cast session available");
+                    return;
+                }
+
+                // Create media info
+                mediaInfo = new chrome.cast.media.MediaInfo(
+                    media.url,
+                    media.type,
+                );
+                mediaInfo.metadata =
+                    new chrome.cast.media.GenericMediaMetadata();
+                mediaInfo.metadata.title = media.name;
+                mediaInfo.metadata.subtitle = "Lucas' Streamer";
+
+                // Create load request
+                const request = new chrome.cast.media.LoadRequest(mediaInfo);
+
+                // Load media
+                castSession
+                    .loadMedia(request)
+                    .then(function (mediaSession) {
+                        console.log("Media loaded successfully");
+                        document.getElementById("status").textContent =
+                            `Connected: Playing ${media.name}`;
+                        document.getElementById("mediaTitle").textContent =
+                            media.name;
+
+                        // Get the media controller - prefer the returned mediaSession if available
+                        mediaController =
+                            mediaSession || castSession.getMediaSession();
+
+                        // Wait a moment for player to initialize before checking state
+                        setTimeout(() => {
+                            try {
+                                // Update UI
+                                if (mediaController) {
+                                    isPlaying =
+                                        mediaController.playerState ===
+                                        chrome.cast.media.PlayerState.PLAYING;
+                                    updatePlayPauseButton();
+
+                                    // Start updating time
+                                    if (updateIntervalId) {
+                                        clearInterval(updateIntervalId);
+                                    }
+                                    updateIntervalId = setInterval(
+                                        updateMediaStatus,
+                                        1000,
+                                    );
+                                }
+                            } catch (error) {
+                                console.error(
+                                    "Error initializing player UI:",
+                                    error,
+                                );
+                            }
+                        }, 500);
+                    })
+                    .catch(function (error) {
+                        console.error("Error loading media:", error);
+                        document.getElementById("status").textContent =
+                            "Error loading media: " + error.message;
+                    });
+            }
+
+            // Function to update media status
+            function updateMediaStatus() {
+                try {
+                    if (!castSession) return;
+
+                    const mediaSession = castSession.getMediaSession();
+                    if (!mediaSession) return;
+
+                    // Update current time and duration
+                    if (mediaSession.media && mediaSession.media.duration) {
+                        mediaDuration = mediaSession.media.duration;
+                    }
+
+                    // Get current time using direct media session
+                    if (typeof mediaSession.getEstimatedTime === "function") {
+                        currentMediaTime = mediaSession.getEstimatedTime();
+                    } else if (mediaSession.currentTime !== undefined) {
+                        currentMediaTime = mediaSession.currentTime;
+                    }
+
+                    // Check if the media is still playing and update UI accordingly
+                    if (
+                        mediaSession.playerState ===
+                        chrome.cast.media.PlayerState.PLAYING
+                    ) {
+                        isPlaying = true;
+
+                        // Update status to show we're playing
+                        const mediaName =
+                            document.getElementById("mediaTitle").textContent;
+                        document.getElementById("status").textContent =
+                            `Connected: Playing ${mediaName}`;
+                    } else if (
+                        mediaSession.playerState ===
+                        chrome.cast.media.PlayerState.PAUSED
+                    ) {
+                        isPlaying = false;
+
+                        // Update status to show we're paused
+                        const mediaName =
+                            document.getElementById("mediaTitle").textContent;
+                        document.getElementById("status").textContent =
+                            `Connected: Paused ${mediaName}`;
+                    } else if (
+                        mediaSession.playerState ===
+                        chrome.cast.media.PlayerState.BUFFERING
+                    ) {
+                        // Update status to show we're buffering
+                        document.getElementById("status").textContent =
+                            `Buffering... Please wait`;
+
+                        // Don't change isPlaying during buffering - maintain previous state
+                    }
+
+                    // Update UI elements
+                    updatePlayPauseButton();
+                    updateTimeDisplay();
+
+                    // Debug info
+                    console.log(
+                        `Media status: ${mediaSession.playerState}, Time: ${currentMediaTime}/${mediaDuration}`,
+                    );
+                } catch (error) {
+                    console.error("Error updating media status:", error);
+                }
+            }
+
+            // Function to update time display and seek bar
+            function updateTimeDisplay() {
+                if (isUserSeeking) return;
+
+                document.getElementById("currentTime").textContent =
+                    formatTime(currentMediaTime);
+                document.getElementById("duration").textContent =
+                    formatTime(mediaDuration);
+
+                // Update seek bar
+                const seekPercent = mediaDuration
+                    ? (currentMediaTime / mediaDuration) * 100
+                    : 0;
+                document.getElementById("seekBar").value = seekPercent;
+            }
+
+            // Function to update play/pause button
+            function updatePlayPauseButton() {
+                const playPauseButton =
+                    document.getElementById("playPauseButton");
+                playPauseButton.textContent = isPlaying ? "⏸" : "▶";
+                playPauseButton.setAttribute(
+                    "aria-label",
+                    isPlaying ? "Pause" : "Play",
+                );
+            }
+
+            // Function to update volume icon
+            function updateVolumeIcon(volumePercent) {
+                const volumeIcon = document.getElementById("volumeIcon");
+                if (volumePercent === 0) {
+                    volumeIcon.textContent = "🔇";
+                } else if (volumePercent < 50) {
+                    volumeIcon.textContent = "🔉";
+                } else {
+                    volumeIcon.textContent = "🔊";
+                }
+            }
+
+            // Helper function to format time (seconds to MM:SS)
+            function formatTime(seconds) {
+                if (isNaN(seconds) || seconds === Infinity) {
+                    return "0:00";
+                }
+
+                seconds = Math.floor(seconds);
+                const minutes = Math.floor(seconds / 60);
+                seconds = seconds % 60;
+
+                return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+            }
+        </script>
+    </body>
+</html>
